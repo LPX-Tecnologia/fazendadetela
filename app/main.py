@@ -1,3 +1,12 @@
+
+
+
+
+
+
+
+
+
 import json
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -7,6 +16,29 @@ from typing import List, Any, Dict
 from .devices import DeviceManager, ADBError
 from .models.db import SessionLocal, Flow, FlowRun, init_db
 from .tasks import dispatch_to_devices
+
+# Adicione no início do arquivo main.py existente
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+import os
+
+# ... (seu código existente) ...
+
+# No final do arquivo, antes de criar o app ou logo depois:
+
+# Criar diretório web se não existir
+web_dir = os.path.join(os.path.dirname(__file__), "..", "web")
+os.makedirs(web_dir, exist_ok=True)
+
+# Montar arquivos estáticos
+app.mount("/web", StaticFiles(directory=web_dir, html=True), name="web")
+
+@app.get("/")
+async def root():
+    index_path = os.path.join(web_dir, "index.html")
+    if os.path.exists(index_path):
+        return FileResponse(index_path)
+    return {"message": "fazendadetela API", "docs": "/docs", "web": "/web"}
 
 app = FastAPI(
     title="QA Device Farm",
