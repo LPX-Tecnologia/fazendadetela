@@ -1,0 +1,52 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: qa
+      POSTGRES_PASSWORD: qa
+      POSTGRES_DB: qa_farm
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+
+  api:
+    build: .
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    environment:
+      DATABASE_URL: postgresql://qa:qa@db:5432/qa_farm
+      REDIS_URL: redis://redis:6379/0
+    ports:
+      - "8000:8000"
+    depends_on:
+      - db
+      - redis
+    # Necessário para o container enxergar dispositivos USB/ADB do host.
+    # Em produção, prefira rodar o worker fora do container (acesso direto ao ADB do host)
+    # ou usar "adb connect" para dispositivos em rede/cloud phones.
+    privileged: true
+    volumes:
+      - /dev/bus/usb:/dev/bus/usb
+
+  worker:
+    build: .
+    command: celery -A app.tasks.celery_app worker --loglevel=info
+    environment:
+      DATABASE_URL: postgresql://qa:qa@db:5432/qa_farm
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      - db
+      - redis
+    privileged: true
+    volumes:
+      - /dev/bus/usb:/dev/bus/usb
+
+volumes:
+  pgdata:
