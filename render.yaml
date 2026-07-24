@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: qa-device-farm-api
+    env: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: qa-device-farm-db
+          property: connectionString
+      - key: REDIS_URL
+        sync: false  # cole aqui a URL do seu Redis (ex: Upstash free tier)
+
+databases:
+  - name: qa-device-farm-db
+    plan: free

@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>QA Device Farm</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #12161C; font-family: 'Inter', sans-serif; }
+  .spin { animation: spin 0.8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  ::selection { background: #5EC8D855; }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: #2A313D; border-radius: 4px; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useCallback } = React;
+
+/* ---------- ícones simples em SVG (sem dependência externa) ---------- */
+const Icon = ({ path, size = 15, color = "currentColor", ...rest }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...rest}>
+    <path d={path} />
+  </svg>
+);
+const ICONS = {
+  cpu: "M9 3v2M15 3v2M9 19v2M15 19v2M3 9h2M3 15h2M19 9h2M19 15h2M7 7h10v10H7z",
+  plus: "M12 5v14M5 12h14",
+  play: "M5 3l14 9-14 9V3z",
+  trash: "M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m-9 0v14a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2V6",
+  chevronDown: "M6 9l6 6 6-6",
+  chevronRight: "M9 18l6-6-6-6",
+  refresh: "M23 4v6h-6M1 20v-6h6M3.5 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.65 4.36A9 9 0 0 0 20.5 15",
+  wifi: "M5 12.55a11 11 0 0 1 14.08 0M1.42 9a16 16 0 0 1 21.16 0M8.53 16.11a6 6 0 0 1 6.95 0M12 20h.01",
+  wifiOff: "M1 1l22 22M16.72 11.06A10.94 10.94 0 0 1 19 12.55M5 12.55a10.94 10.94 0 0 1 5.17-2.39M10.71 5.05A16 16 0 0 1 22.58 9M1.42 9a15.91 15.91 0 0 1 4.7-2.88M8.53 16.11a6 6 0 0 1 6.95 0M12 20h.01",
+  smartphone: "M17 2H7a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2zM12 18h.01",
+  terminal: "M4 17l6-6-6-6M12 19h8",
+  list: "M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01",
+  history: "M3 3v5h5M3.05 13A9 9 0 1 0 6 5.3L3 8M12 7v5l4 2",
+};
+const I = ({ name, ...rest }) => <Icon path={ICONS[name]} {...rest} />;
+
+const FONT_MONO = "IBM Plex Mono, monospace";
+const FONT_UI = "Inter, sans-serif";
+
+const STEP_TYPES = [
+  { value: "open_app", label: "Abrir app", fields: [] },
+  { value: "wait", label: "Aguardar", fields: [{ name: "seconds", label: "segundos", type: "number", default: 1 }] },
+  { value: "tap", label: "Toque em coordenada", fields: [{ name: "x", label: "x", type: "number", default: 0 }, { name: "y", label: "y", type: "number", default: 0 }] },
+  { value: "swipe", label: "Arrastar", fields: [{ name: "x1", label: "x1", type: "number", default: 0 }, { name: "y1", label: "y1", type: "number", default: 0 }, { name: "x2", label: "x2", type: "number", default: 0 }, { name: "y2", label: "y2", type: "number", default: 0 }] },
+  { value: "input_text", label: "Digitar texto", fields: [{ name: "text", label: "texto", type: "text", default: "" }] },
+  { value: "assert_text", label: "Validar texto na tela (OCR)", fields: [{ name: "expected", label: "texto esperado", type: "text", default: "" }] },
+  { value: "find_and_tap", label: "Localizar e tocar (imagem)", fields: [{ name: "template", label: "caminho do template", type: "text", default: "templates/botao.png" }] },
+  { value: "screenshot", label: "Capturar tela", fields: [] },
+];
+
+function useApi(baseUrl) {
+  return useCallback(async (path, opts = {}) => {
+    const res = await fetch(`${baseUrl}${path}`, { headers: { "Content-Type": "application/json" }, ...opts });
+    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+    return res.json();
+  }, [baseUrl]);
+}
+
+const STATUS_COLOR = { device: "#6FCF97", running: "#E8A33D", success: "#6FCF97", failed: "#E86A5C", pending: "#8A94A3", offline: "#E86A5C", unauthorized: "#E8A33D" };
+
+function Led({ status }) {
+  const color = STATUS_COLOR[status] || "#8A94A3";
+  return <span style={{ display: "inline-block", width: 9, height: 9, borderRadius: "50%", background: color, boxShadow: `0 0 6px ${color}`, flexShrink: 0 }} />;
+}
+
+function Panel({ title, icon, children, right }) {
+  return (
+    <div style={{ background: "#1A2029", border: "1px solid #2A313D", borderRadius: 10 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 16px", borderBottom: "1px solid #2A313D" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, color: "#E7E9EC", fontWeight: 600, fontSize: 13, letterSpacing: "0.04em", textTransform: "uppercase", fontFamily: FONT_UI }}>
+          {icon && <I name={icon} size={15} color="#5EC8D8" />}
+          {title}
+        </div>
+        {right}
+      </div>
+      <div style={{ padding: 16 }}>{children}</div>
+    </div>
+  );
+}
+
+function Button({ children, onClick, variant = "primary", disabled, small }) {
+  const styles = {
+    primary: { background: "#5EC8D8", color: "#0F1319", border: "1px solid #5EC8D8" },
+    ghost: { background: "transparent", color: "#8A94A3", border: "1px solid #2A313D" },
+  };
+  return (
+    <button onClick={onClick} disabled={disabled} style={{ ...styles[variant], padding: small ? "5px 10px" : "8px 14px", borderRadius: 6, fontSize: small ? 12 : 13, fontWeight: 600, fontFamily: FONT_UI, cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.5 : 1, display: "inline-flex", alignItems: "center", gap: 6 }}>
+      {children}
+    </button>
+  );
+}
+
+function Input({ value, onChange, placeholder, type = "text", style }) {
+  return (
+    <input type={type} value={value} onChange={(e) => onChange(type === "number" ? Number(e.target.value) : e.target.value)} placeholder={placeholder}
+      style={{ background: "#12161C", border: "1px solid #2A313D", borderRadius: 6, color: "#E7E9EC", padding: "7px 10px", fontSize: 13, fontFamily: FONT_MONO, width: "100%", boxSizing: "border-box", ...style }} />
+  );
+}
+
+function DeviceRack({ devices, loading, error, onRefresh, selected, onToggleSelect }) {
+  return (
+    <Panel title="Rack de dispositivos" icon="smartphone" right={
+      <button onClick={onRefresh} title="Atualizar" style={{ background: "none", border: "none", cursor: "pointer", color: "#8A94A3" }}>
+        <I name="refresh" size={14} className={loading ? "spin" : ""} />
+      </button>
+    }>
+      {error && <div style={{ color: "#E86A5C", fontSize: 12, fontFamily: FONT_MONO, marginBottom: 10, lineHeight: 1.5 }}>Não foi possível falar com a API em {error}. Verifique se o backend está no ar e se a URL configurada acima está correta.</div>}
+      {!error && devices.length === 0 && <div style={{ color: "#8A94A3", fontSize: 12.5, fontFamily: FONT_UI, lineHeight: 1.6 }}>Nenhum dispositivo detectado. Conecte um celular com depuração USB ativa, ou inicie um emulador, e clique em atualizar.</div>}
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        {devices.map((d) => (
+          <label key={d.serial} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 10px", background: selected.includes(d.serial) ? "#20293380" : "#12161C", border: `1px solid ${selected.includes(d.serial) ? "#5EC8D8" : "#2A313D"}`, borderRadius: 7, cursor: "pointer" }}>
+            <input type="checkbox" checked={selected.includes(d.serial)} onChange={() => onToggleSelect(d.serial)} style={{ accentColor: "#5EC8D8" }} />
+            <Led status={d.state} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontFamily: FONT_MONO, fontSize: 12.5, color: "#E7E9EC", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{d.model}</div>
+              <div style={{ fontFamily: FONT_MONO, fontSize: 10.5, color: "#8A94A3" }}>{d.serial} · Android {d.android_version}</div>
+            </div>
+          </label>
+        ))}
+      </div>
+    </Panel>
+  );
+}
+
+function FlowBuilder({ onCreated, apiCall }) {
+  const [name, setName] = useState("");
+  const [pkg, setPkg] = useState("");
+  const [steps, setSteps] = useState([]);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState(null);
+
+  function addStep(type) {
+    const def = STEP_TYPES.find((s) => s.value === type);
+    const params = {};
+    def.fields.forEach((f) => (params[f.name] = f.default));
+    setSteps([...steps, { action: type, ...params }]);
+  }
+  function updateStep(i, key, val) { const next = [...steps]; next[i] = { ...next[i], [key]: val }; setSteps(next); }
+  function removeStep(i) { setSteps(steps.filter((_, idx) => idx !== i)); }
+
+  async function save() {
+    if (!name || !pkg || steps.length === 0) { setErr("Preencha nome, pacote do app e adicione pelo menos um passo."); return; }
+    setErr(null); setSaving(true);
+    try {
+      const flow = await apiCall("/flows", { method: "POST", body: JSON.stringify({ name, target_package: pkg, steps }) });
+      setName(""); setPkg(""); setSteps([]);
+      onCreated(flow);
+    } catch (e) { setErr(`Não foi possível salvar o fluxo (${e.message}).`); }
+    finally { setSaving(false); }
+  }
+
+  return (
+    <Panel title="Novo fluxo de teste" icon="list">
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 }}>
+        <Input value={name} onChange={setName} placeholder="Nome do fluxo (ex: Teste de login)" />
+        <Input value={pkg} onChange={setPkg} placeholder="Pacote do app (com.empresa.app)" />
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 }}>
+        {steps.map((step, i) => {
+          const def = STEP_TYPES.find((s) => s.value === step.action);
+          return (
+            <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, background: "#12161C", border: "1px solid #2A313D", borderRadius: 7, padding: "8px 10px" }}>
+              <span style={{ fontFamily: FONT_MONO, fontSize: 11, color: "#5EC8D8", background: "#5EC8D822", padding: "2px 6px", borderRadius: 4, flexShrink: 0 }}>{i + 1}</span>
+              <span style={{ fontFamily: FONT_UI, fontSize: 12.5, color: "#E7E9EC", minWidth: 130 }}>{def.label}</span>
+              <div style={{ display: "flex", gap: 6, flex: 1, flexWrap: "wrap" }}>
+                {def.fields.map((f) => <Input key={f.name} value={step[f.name]} onChange={(v) => updateStep(i, f.name, v)} placeholder={f.label} type={f.type} style={{ maxWidth: 160 }} />)}
+              </div>
+              <button onClick={() => removeStep(i)} style={{ background: "none", border: "none", color: "#8A94A3", cursor: "pointer" }}><I name="trash" size={14} /></button>
+            </div>
+          );
+        })}
+        {steps.length === 0 && <div style={{ color: "#8A94A3", fontSize: 12.5, fontFamily: FONT_UI }}>Adicione passos abaixo — eles rodam na ordem em que aparecem aqui.</div>}
+      </div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 14 }}>
+        {STEP_TYPES.map((s) => <Button key={s.value} variant="ghost" small onClick={() => addStep(s.value)}><I name="plus" size={12} /> {s.label}</Button>)}
+      </div>
+      {err && <div style={{ color: "#E86A5C", fontSize: 12, fontFamily: FONT_MONO, marginBottom: 10 }}>{err}</div>}
+      <Button onClick={save} disabled={saving}>{saving ? "Salvando..." : "Salvar fluxo"}</Button>
+    </Panel>
+  );
+}
+
+function FlowsList({ flows, selectedDevices, apiCall, onRun }) {
+  const [running, setRunning] = useState(null);
+  async function trigger(flowId) {
+    if (selectedDevices.length === 0) { alert("Selecione ao menos um dispositivo no rack à esquerda."); return; }
+    setRunning(flowId);
+    try { await apiCall("/runs", { method: "POST", body: JSON.stringify({ flow_id: flowId, device_serials: selectedDevices }) }); onRun(); }
+    catch (e) { alert(`Falha ao disparar execução: ${e.message}`); }
+    finally { setRunning(null); }
+  }
+  return (
+    <Panel title="Fluxos cadastrados" icon="terminal">
+      {flows.length === 0 && <div style={{ color: "#8A94A3", fontSize: 12.5, fontFamily: FONT_UI }}>Nenhum fluxo cadastrado ainda.</div>}
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        {flows.map((f) => (
+          <div key={f.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "9px 10px", background: "#12161C", border: "1px solid #2A313D", borderRadius: 7 }}>
+            <div>
+              <div style={{ fontFamily: FONT_UI, fontSize: 13, color: "#E7E9EC" }}>{f.name}</div>
+              <div style={{ fontFamily: FONT_MONO, fontSize: 11, color: "#8A94A3" }}>{f.target_package}</div>
+            </div>
+            <Button small onClick={() => trigger(f.id)} disabled={running === f.id}><I name="play" size={12} /> {running === f.id ? "Disparando..." : `Rodar (${selectedDevices.length})`}</Button>
+          </div>
+        ))}
+      </div>
+    </Panel>
+  );
+}
+
+function RunsHistory({ runs, apiCall, onRefresh }) {
+  const [expanded, setExpanded] = useState(null);
+  const [detail, setDetail] = useState({});
+  async function toggle(id) {
+    if (expanded === id) { setExpanded(null); return; }
+    setExpanded(id);
+    if (!detail[id]) {
+      try { const d = await apiCall(`/runs/${id}`); setDetail((p) => ({ ...p, [id]: d })); }
+      catch (e) { setDetail((p) => ({ ...p, [id]: { log: `Erro ao carregar log: ${e.message}` } })); }
+    }
+  }
+  return (
+    <Panel title="Histórico de execuções" icon="history" right={<button onClick={onRefresh} style={{ background: "none", border: "none", cursor: "pointer", color: "#8A94A3" }}><I name="refresh" size={14} /></button>}>
+      {runs.length === 0 && <div style={{ color: "#8A94A3", fontSize: 12.5, fontFamily: FONT_UI }}>Nenhuma execução disparada ainda.</div>}
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        {runs.map((r) => (
+          <div key={r.id} style={{ background: "#12161C", border: "1px solid #2A313D", borderRadius: 7, overflow: "hidden" }}>
+            <div onClick={() => toggle(r.id)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 10px", cursor: "pointer" }}>
+              {expanded === r.id ? <I name="chevronDown" size={13} color="#8A94A3" /> : <I name="chevronRight" size={13} color="#8A94A3" />}
+              <Led status={r.status} />
+              <span style={{ fontFamily: FONT_MONO, fontSize: 12, color: "#E7E9EC", flex: 1 }}>fluxo #{r.flow_id} · {r.device_serial}</span>
+              <span style={{ fontFamily: FONT_MONO, fontSize: 11, color: "#8A94A3", textTransform: "uppercase" }}>{r.status}</span>
+            </div>
+            {expanded === r.id && <pre style={{ margin: 0, padding: "10px 12px", borderTop: "1px solid #2A313D", fontFamily: FONT_MONO, fontSize: 11.5, color: "#8A94A3", whiteSpace: "pre-wrap", maxHeight: 200, overflowY: "auto" }}>{detail[r.id]?.log || "Carregando..."}</pre>}
+          </div>
+        ))}
+      </div>
+    </Panel>
+  );
+}
+
+function App() {
+  const [baseUrl, setBaseUrl] = useState(window.QA_FARM_API_URL || "http://localhost:8000");
+  const [connected, setConnected] = useState(null);
+  const [devices, setDevices] = useState([]);
+  const [devError, setDevError] = useState(null);
+  const [loadingDevices, setLoadingDevices] = useState(false);
+  const [selected, setSelected] = useState([]);
+  const [flows, setFlows] = useState([]);
+  const [runs, setRuns] = useState([]);
+  const [tab, setTab] = useState("flows");
+  const apiCall = useApi(baseUrl);
+
+  const refreshDevices = useCallback(async () => {
+    setLoadingDevices(true); setDevError(null);
+    try { setDevices(await apiCall("/devices")); setConnected(true); }
+    catch (e) { setDevError(baseUrl); setConnected(false); }
+    finally { setLoadingDevices(false); }
+  }, [apiCall, baseUrl]);
+
+  const refreshFlows = useCallback(async () => { try { setFlows(await apiCall("/flows")); } catch (e) {} }, [apiCall]);
+  const refreshRuns = useCallback(async () => { try { setRuns(await apiCall("/runs")); } catch (e) {} }, [apiCall]);
+
+  useEffect(() => { refreshDevices(); refreshFlows(); refreshRuns(); }, [baseUrl]);
+
+  function toggleSelect(serial) { setSelected((prev) => prev.includes(serial) ? prev.filter((s) => s !== serial) : [...prev, serial]); }
+
+  return (
+    <div style={{ minHeight: "100vh", background: "#12161C" }}>
+      <div style={{ borderBottom: "1px solid #2A313D", padding: "16px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ width: 30, height: 30, borderRadius: 7, background: "#5EC8D8", display: "flex", alignItems: "center", justifyContent: "center" }}><I name="cpu" size={17} color="#0F1319" /></div>
+          <div>
+            <div style={{ color: "#E7E9EC", fontWeight: 800, fontSize: 15, letterSpacing: "-0.01em" }}>QA Device Farm</div>
+            <div style={{ color: "#8A94A3", fontSize: 11, fontFamily: FONT_MONO }}>orquestração de testes multi-dispositivo</div>
+          </div>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          {connected === true && <I name="wifi" size={15} color="#6FCF97" />}
+          {connected === false && <I name="wifiOff" size={15} color="#E86A5C" />}
+          <Input value={baseUrl} onChange={setBaseUrl} placeholder="http://localhost:8000" style={{ width: 260 }} />
+        </div>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "300px 1fr", gap: 20, padding: 24, alignItems: "start" }}>
+        <DeviceRack devices={devices} loading={loadingDevices} error={devError} onRefresh={refreshDevices} selected={selected} onToggleSelect={toggleSelect} />
+        <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+          <div style={{ display: "flex", gap: 6 }}>
+            <Button variant={tab === "flows" ? "primary" : "ghost"} onClick={() => setTab("flows")}>Fluxos</Button>
+            <Button variant={tab === "runs" ? "primary" : "ghost"} onClick={() => setTab("runs")}>Execuções</Button>
+          </div>
+          {tab === "flows" && <>
+            <FlowBuilder apiCall={apiCall} onCreated={(f) => setFlows((prev) => [...prev, f])} />
+            <FlowsList flows={flows} selectedDevices={selected} apiCall={apiCall} onRun={refreshRuns} />
+          </>}
+          {tab === "runs" && <RunsHistory runs={runs} apiCall={apiCall} onRefresh={refreshRuns} />}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
